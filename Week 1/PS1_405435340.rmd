@@ -1,0 +1,199 @@
+---
+title: "**Problem Set 1**"
+output: pdf_document
+---
+|     Name: Redmond Xia
+  
+|     Names of whom I discussed this problem set with: 
+
+
+# Question 1
+
+*Construct the value-weighted market return using CRSP data, replicating the market return
+time series available in Kenneth French website. Also calculate the equal-weighted market return,
+and the lagged total market capitalization. Your output should be from January 1926 to December
+2019, at a monthly frequency.*
+
+|     Before Calculating the portfolio time series, I conduct a series of data cleaning as part of my PS Q1 function. Next, I describe my data cleaning process and their respective assumptions:
+
+```{r, echo = FALSE, warning = FALSE}
+suppressWarnings(suppressMessages(library(data.table)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(knitr)))
+# Data Cleaning
+CRSP = as.data.table(read.table("CRSP_Stocks.csv", sep = ',', header = TRUE))
+
+PS1_Q1 <- function(CRSP) {
+  CRSP[,RET := as.numeric(levels(RET))[RET]]
+  CRSP[,DLRET := as.numeric(levels(DLRET))[DLRET]]
+  CRSP[,date := as.Date(date)]
+  # Since prices are negative to indicates that crsp took average of bid ask spread, we take the absolute value of it only.
+  CRSP[, PRC := abs(PRC)]
+  CRSP[, MKT_CAP := PRC * SHROUT]
+  
+  # Lags the Market Cap by each firm
+  CRSP[,LAG_MKTCAP := shift(MKT_CAP), by = PERMNO]
+  
+  # Only use common shares which is equivalent to Share code = (10,11)
+  # Only use the NYSE American Stock Exchange, or NASDAQ
+  CRSP = CRSP[SHRCD %in% c(10,11)]
+  CRSP = CRSP[EXCHCD %in% c(1,2,3)]
+  CRSP = na.omit(CRSP, cols = "LAG_MKTCAP")
+  
+  # Na Cleaning
+  CRSP = CRSP[!is.na(RET) | !is.na(DLRET),] # This removes if either is missing
+  CRSP = CRSP[is.na(RET), RETURN := DLRET] # If we do not have a return, we use delisting return
+  CRSP = CRSP[is.na(DLRET), RETURN := RET] # If there is no delisted returns, we use actual returns
+  
+  # After all the cleaning, if we have both, then we calculate the cum-dividend return as (1+ret) * (1+DLRET) - 1
+  CRSP = CRSP[!is.na(RET) & !is.na(DLRET), RETURN := (1+RET) * (1 + DLRET) - 1]
+  
+  setkey(CRSP, date)
+
+  LAG_CAP = CRSP[, .(Stock_lag_MV = sum(LAG_MKTCAP) / 1000000), by = date]
+  
+  # Formatting the output
+  LAG_CAP[, Year := year(date)]
+  LAG_CAP[, Month := month(date)]
+  
+  # Create the value weighted returns
+  CRSP[, Value_WGT := LAG_MKTCAP / sum(LAG_MKTCAP), by = date]
+  VWRET = CRSP[, .(Stock_Vw_Ret = sum(Value_WGT * RETURN, na.rm = TRUE)), by = date]
+  # Create the equally weighted returns
+  EQRET = CRSP[,.(Stock_Ew_Ret = mean(RETURN, na.rm = TRUE)), by = date]
+
+  # Creating the output
+  output = full_join(LAG_CAP, EQRET, by = 'date')
+  output = full_join(output, VWRET, by = 'date')
+  output = output[,c(3,4,2,5,6)]
+  return(output)
+}
+
+CRSP_MONTHLY_RET = PS1_Q1(CRSP)
+```
+
+|   1. **Universe of stocks:** Following Ken French procedure, I restrict the sample to common shares (share codes 10 and 11) and to securities traded in the New York Stock Exchange, American Stock Exchange, or the Nasdaq Stock Exchange (exchange codes 1, 2, and 3).
+
+|   2. **Missing returns:** If both delisting return and holding period returns are missing then I remove the record.
+
+|   3. **Delisting return calculation:** If the record only has a return but no delisted return, then return is used. If the record only has delisted return but no return, then the delisted return is used. We calculate the cum-dividend returns as $Return = (1 + RET) * (1 + DLRET) - 1$.
+
+|   4. **Market Capitalization Calculation:** First, CRSP uses negative price as the average bid-ask spread. I used take them as market price by using its positive magnitude. Then, Market Capitalization is equivalent to $MktCap = PRC * SHROU$, which is price times number of shares. Then we lag the market cap by one month. If I find a missing lag market cap, the record is removed.
+
+|   5. **Portfolio weights:** For the equallty weighted returns, each stock has the same weight, i.e. $Equally Weighted = \frac{1}{N}$ where N is the number of stock for that month. In the value weighted returns, we weight each stock by the lagged market cap, i.e. $Value Weighted = \frac{LagMktCap_i}{\sum_{i = 1}^{N} LagMKtCap_i}$
+
+|   6. **Sample period:** To get report the returns, we download the data starting from December 1925. This is because we use the lag methods to calculate the returns. Thus, the output is from January 1926 to December 2019 by monthly frequency.
+
+|   7. **Definition of portfolio weights:** The definition of portfolio return is always the same, $Portfolio Return = \sum_{i=1}^{n} w_i * return_i$. The difference is between equally weighted and value weighted is the $w_i$, which is defined in 5.
+
+Displaying the first 15 months of returns:
+```{r, echo = FALSE}
+
+kable(CRSP_MONTHLY_RET[1:15,])
+
+```
+
+# Question 2
+*Using the risk-free rate of return from French's website, report the following moments of the
+market excess returns for both time series (4 decimal digits): annualized return, annualized
+volatility, annualized Sharpe ratio, skewness, and excess kurtosis. Annualized values should
+be calculated geometrically. You should be comparing between July 1926 to December 2019,
+at a monthly frequency.*
+
+|  The summary The summary statistics are in Table 1 below. I report the following five statistics: annualized mean, annualized standard deviation, annualized sharpe ratio, skewness, and excess kurtosis. In Column 1, I report the statistics for the replicated value-weighted market portfolio of stocks calculated in the previous question. In Column 2, I report the statistics for the value-weighted market portfolio of stocks from Ken French's website
+
+
+```{r, echo = FALSE, warning = FALSE}
+suppressWarnings(suppressMessages(library(readr)))
+suppressWarnings(suppressMessages(library(fBasics)))
+FF_Factor <- as.data.table(read_csv("F-F_Research_Data_Factors.CSV", 
+    col_types = cols(X1 = col_datetime(format = "%Y%m")), 
+    skip = 3))
+colnames(FF_Factor)[1] <- "date"
+colnames(FF_Factor)[2] <- "Mkt_minus_Rf"
+FF_Factor[,Year := year(date)]
+FF_Factor[,Month := month(date)]
+FF_Factor = FF_Factor[,c(6,7,2,3,4,5)]
+
+PS1_Q2 = function(CRSP, FF) {
+  CRSP = CRSP[which(CRSP$Year == 1926 & CRSP$Month == 7):nrow(CRSP),]
+  FF = FF[which(FF$Year >= 1926 & FF$Year <= 2019),]
+  estimated = CRSP$Stock_Vw_Ret - FF$RF / 100
+  actual = FF$Mkt_minus_Rf / 100
+  output = matrix(0, nrow = 5, ncol = 2)
+  output[1,1] = round(mean(estimated) * 12, 4)
+  output[1,2] = round(mean(actual) * 12, 4)
+  output[2,1] = round(sd(estimated) * sqrt(12), 4)
+  output[2,2] = round(sd(actual) * sqrt(12), 4)
+  output[3,1] = round(output[1,1] / output[2,1], 4)
+  output[3,2] = round(output[1,2]/output[2,2], 4)
+  output[4,1] = round(skewness(estimated), 4)
+  output[4,2] = round(skewness(actual), 4)
+  output[5,1] = round(kurtosis(estimated, method = "excess"), 4)
+  output[5,2] = round(kurtosis(actual, method = "excess"), 4)
+  rownames(output) <- c("Annualized Mean", "Annualized Standard Deviation", "Annualized Sharpe Ratio", "Skewness", "Excess Kurtosis")
+  colnames(output) <- c("Estimated FF Market Excess Return", "Actual FF Market Excess Return")
+  return(output)
+}
+
+FF_Vs_CRSP = PS1_Q2(CRSP_MONTHLY_RET,FF_Factor)
+```
+
+\begin{center}
+Table 1: Summary Statistics 
+\end{center}
+
+```{r, echo = FALSE}
+kable(FF_Vs_CRSP, format = 'markdown')
+```
+
+|   From question, we have a time series of value-weighted market returns, namely $\{r_t\}_{t=1}^{T}$
+
+|   1. **Sample period:** Monthly from July 1926 to December 2019.
+
+|   2. **Excess Skewness:** To calculate excess skewness, I used the library fBasics function skewness for the monthly time series, with no annualization/logs, using the full sample
+
+|   3. **Kurtosis**: To calcualte excess kurtosis, I used the library fBasics function kurtosis (method = 'excess'), with no annualization/logs, using the full sample
+
+|   4. **Annualized Mean**: I took the arithmetic mean $\sum_{i=1}^{n} \frac{Ret_i}{N}$ of the excess returns for both method. To annualized, I took the arithmetic approach by multiplying that number by 12.
+
+|   5. **Annualized Standard Deviation**: I took the R base standard deviation function for the returns and annualized it by multiplying $\sqrt{12}$
+
+|   6. **Sharpe Ratio**: Sharpe ratio is definited by $Sharpe Ratio = \frac{Annualized Mean}{Annualized Standard Deviation}$
+
+# Question 3
+|   *Report (up to 8 decimal digits) the correlation between your time series and French's time series, and the maximum absolute difference between the two time series. It is zero? If not, justify whether the difference is economically negligible or not. What are the reasons a nonzero difference? You should be comparing between July 1926 to December 2019, at a monthly frequency.*
+
+My report uses the results from question 2 and finds the correlation based on the R base correlation function. Then I find the largest difference in the value weighted excess returns to FF excess returns. You can find the summary in the table below
+
+```{r, echo = FALSE}
+PS1_Q3 = function(CRSP,FF) {
+  CRSP = CRSP[which(CRSP$Year == 1926 & CRSP$Month == 7):nrow(CRSP),]
+  FF = FF[which(FF$Year >= 1926 & FF$Year <= 2019),]
+  estimated = CRSP$Stock_Vw_Ret - FF$RF / 100
+  actual = FF$Mkt_minus_Rf / 100
+  output = matrix(0,ncol = 1, nrow = 2)
+  output[1] = round(cor(estimated,actual), 8) 
+  output[2] = round(max(abs(estimated-actual)), 8)
+  rownames(output) = c('1. Correlation', '2. Maximum Absolute Difference')
+  colnames(output)[1] = ''
+  return(output)
+}
+Corr = PS1_Q3(CRSP_MONTHLY_RET,FF_Factor)
+
+```
+
+
+|    In Table 2 below, I report the time-series correlation between the replicated value-weighted market portfolio of stocks and the value-weighted market portfolio of stocks from Ken French's website. I also report the maximum difference between the two series. I limit the sample to be between July 1926 and December 2019.
+
+The finding shows that the correlation is very close to 1. This means that they almost match each other. The biggest difference in absolute excess returns is roughly 19 basis point. A neglible number shows that they almost exactly match each other. However, The difference between the replicated portfolio and the one from French's Website is not zero. This could be due to computer precision error or that FF model doesn't capture 100% of the replicated portfolio. It captures up to 99.99% which is close to perfect.
+
+\begin{center}
+Table 2: Correlation and maximum difference 
+\end{center}
+```{r, echo = FALSE}
+kable(Corr)
+```
+
+
+
